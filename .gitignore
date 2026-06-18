@@ -1,0 +1,7 @@
+# 비밀값 — 커밋 금지 (토큰은 GitHub Actions Secret 으로 설정)
+.env
+
+# 생성물 / 의존성 (GitHub Actions 가 빌드)
+docs/
+node_modules/
+*.log
