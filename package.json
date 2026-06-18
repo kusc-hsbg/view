@@ -1,0 +1,11 @@
+{
+  "name": "affinity-monday-views",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "먼데이 4개 매칭 뷰 정적 HTML 생성기 (GitHub Pages, 매일 09:00 갱신)",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "generate": "node generate.mjs"
+  }
+}
