@@ -149,12 +149,16 @@ function deriveOffDates(dates) {
 }
 
 // ── 매핑 ─────────────────────────────────────────────────────
+const EXCLUDE_STUDENT_GROUPS = new Set(["기아대책 DB", "DB 정리 요망"]);
+
 function mapStudents(items) {
   const groups = new Map();
   const order = [];
   for (const it of items) {
     const m = byId(it);
-    const g = N(it.groupTitle || it.group?.title) || "미분류";
+    const gTitle = N(it.groupTitle || it.group?.title);
+    if (EXCLUDE_STUDENT_GROUPS.has(gTitle)) continue; // 불러오지 않을 그룹
+    const g = gTitle || "미분류";
     if (!groups.has(g)) {
       groups.set(g, []);
       order.push(g);
@@ -211,14 +215,18 @@ function mapCompleted(classItems) {
 }
 
 function computeDropouts(classItems, studentItems, reference) {
-  const end = isoOf(reference);
-  const startDate = new Date(reference);
-  startDate.setMonth(startDate.getMonth() - 1);
-  const start = isoOf(startDate);
+  // 이탈 기준: 종강된 지 1달 ~ 2달 사이 (그 전엔 재등록 유예, 그 후는 제외).
+  const endD = new Date(reference);
+  endD.setMonth(endD.getMonth() - 1); // 1달 전
+  const startD = new Date(reference);
+  startD.setMonth(startD.getMonth() - 2); // 2달 전
+  const windowEnd = isoOf(endD);
+  const windowStart = isoOf(startD);
+
   const recent = new Map();
   for (const it of classItems) {
     const c = mapClass(it);
-    if (!c.endDate || c.endDate < start || c.endDate > end || !c.students) continue;
+    if (!c.endDate || c.endDate < windowStart || c.endDate > windowEnd || !c.students) continue;
     for (const raw of c.students.split(",")) {
       const name = normName(raw);
       if (!name) continue;
@@ -226,21 +234,31 @@ function computeDropouts(classItems, studentItems, reference) {
       if (!cur || c.endDate > cur.grad) recent.set(name, { grad: c.endDate, course: c.name, instructor: c.instructor });
     }
   }
+
+  // 이름별 DB 레코드 묶음 + 동명이인 중 한 명이라도 수강중인지.
   const dbByName = new Map();
   for (const it of studentItems) {
     const nm = normName(it.name);
-    if (nm && !dbByName.has(nm)) dbByName.set(nm, it);
+    if (!nm) continue;
+    let e = dbByName.get(nm);
+    if (!e) {
+      e = { items: [], anyEnrolled: false };
+      dbByName.set(nm, e);
+    }
+    e.items.push(it);
+    if (displayOf(byId(it), "formula_mkv1sj2z") === "1") e.anyEnrolled = true;
   }
+
   const rows = [];
   for (const [name, g] of recent) {
     const rec = dbByName.get(name);
     if (!rec) continue;
-    const m = byId(rec);
-    if (displayOf(m, "formula_mkv1sj2z") === "1") continue;
+    if (rec.anyEnrolled) continue; // 동명이인 포함 누구라도 수강 중이면 이탈에서 제외 (오인 방지)
+    const m = byId(rec.items[0]);
     rows.push({ name, gradDate: g.grad, course: g.course, instructor: g.instructor, region: textOf(m, "text_mknkvpaq"), contact: textOf(m, "text_mktj6gkp"), email: textOf(m, "text_mksvtgc8") });
   }
   rows.sort((a, b) => b.gradDate.localeCompare(a.gradDate) || a.name.localeCompare(b.name));
-  return { rows, windowLabel: `${start} ~ ${end}` };
+  return { rows, windowLabel: `${windowStart} ~ ${windowEnd}` };
 }
 
 function summarizeInstructors(classes) {
@@ -506,8 +524,8 @@ function renderApp(sections) {
 
 function renderPage(sections, generatedAt) {
   const payload = encryptContent(renderApp(sections), VIEW_PASSWORD);
-  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Affinity 먼데이 매칭 뷰</title><style>${STYLE}</style></head><body>
-<header><h1>Affinity 먼데이 매칭 뷰</h1><p>먼데이 보드 실시간 매칭 · 갱신: ${esc(generatedAt)}</p></header>
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>어피니티 유니버스 스케줄</title><style>${STYLE}</style></head><body>
+<header><h1>어피니티 유니버스 스케줄</h1><p>먼데이 보드 실시간 매칭 · 갱신: ${esc(generatedAt)}</p></header>
 <div id="gate" class="gate"><div class="gatebox"><h2>접근 비밀번호</h2><p>이 페이지를 보려면 비밀번호를 입력하세요.</p>
 <input id="pw" type="password" inputmode="numeric" placeholder="비밀번호" autocomplete="off"><button id="pwbtn" type="button">확인</button><p id="pwerr" class="pwerr"></p></div></div>
 <div id="app"></div>
@@ -559,10 +577,10 @@ async function main() {
 
   const html = renderPage(
     [
-      { id: "students", label: "수강생 리스트", html: renderStudents(students) },
       { id: "schedule", label: "강사 스케줄", html: renderSchedule(weekday, weekdayClasses, current) },
       { id: "dropout", label: "이탈 리스트", html: renderDropout(dropout) },
       { id: "completed", label: "종강 리스트", html: renderCompleted(completed) },
+      { id: "students", label: "수강생 DB", html: renderStudents(students) },
     ],
     generatedAt,
   );
