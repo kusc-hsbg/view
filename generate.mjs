@@ -214,56 +214,15 @@ function mapCompleted(classItems) {
     .sort((a, b) => (b.endDate || "").localeCompare(a.endDate || "") || a.startMin - b.startMin);
 }
 
-function computeDropouts(classItems, studentItems, reference) {
-  // 이탈 기준: 종강된 지 1달 ~ 2달 사이 (그 전엔 재등록 유예, 그 후는 제외).
-  const endD = new Date(reference);
-  endD.setMonth(endD.getMonth() - 1); // 1달 전
-  const startD = new Date(reference);
-  startD.setMonth(startD.getMonth() - 2); // 2달 전
-  const windowEnd = isoOf(endD);
-  const windowStart = isoOf(startD);
-
-  const recent = new Map();
-  for (const it of classItems) {
-    const c = mapClass(it);
-    if (!c.endDate || c.endDate < windowStart || c.endDate > windowEnd || !c.students) continue;
-    for (const raw of c.students.split(",")) {
-      const name = normName(raw);
-      if (!name) continue;
-      const cur = recent.get(name);
-      if (!cur || c.endDate > cur.grad) recent.set(name, { grad: c.endDate, course: c.name, instructor: c.instructor });
-    }
-  }
-
-  // 이름별 DB 레코드 묶음 + 동명이인 중 한 명이라도 수강중인지.
-  const dbByName = new Map();
-  for (const it of studentItems) {
-    const nm = normName(it.name);
-    if (!nm) continue;
-    let e = dbByName.get(nm);
-    if (!e) {
-      e = { items: [], anyEnrolled: false };
-      dbByName.set(nm, e);
-    }
-    e.items.push(it);
-    if (displayOf(byId(it), "formula_mkv1sj2z") === "1") e.anyEnrolled = true;
-  }
-
-  const rows = [];
-  for (const [name, g] of recent) {
-    const rec = dbByName.get(name);
-    if (!rec) continue;
-    if (rec.anyEnrolled) continue; // 동명이인 포함 누구라도 수강 중이면 이탈에서 제외 (오인 방지)
-    const m = byId(rec.items[0]);
-    rows.push({ name, gradDate: g.grad, course: g.course, instructor: g.instructor, region: textOf(m, "text_mknkvpaq"), contact: textOf(m, "text_mktj6gkp"), email: textOf(m, "text_mksvtgc8") });
-  }
-  rows.sort((a, b) => b.gradDate.localeCompare(a.gradDate) || a.name.localeCompare(b.name));
-  return { rows, windowLabel: `${windowStart} ~ ${windowEnd}` };
+// project_owner 가 "A, B" 처럼 2명이면 각각의 개별 강사로 분리.
+function splitInstructors(text) {
+  const names = N(text).split(",").map((s) => N(s)).filter(Boolean);
+  return names.length ? names : ["미배정"];
 }
 
 function summarizeInstructors(classes) {
   const counts = new Map();
-  for (const c of classes) counts.set(c.instructor || "미배정", (counts.get(c.instructor || "미배정") || 0) + 1);
+  for (const c of classes) for (const name of splitInstructors(c.instructor)) counts.set(name, (counts.get(name) || 0) + 1);
   return Array.from(counts.entries()).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
@@ -313,7 +272,7 @@ function renderWeekly(weekday) {
     html += `<div class="daycol"><div class="dayhead">${d.label} <span>${list.length}</span></div>`;
     if (list.length === 0) html += `<p class="empty">수업 없음</p>`;
     for (const c of list) {
-      html += `<div class="card" data-inst='${attr(c.instructor || "미배정")}'><div class="ctime"><strong>${esc(c.startTime || "시간미정")}</strong><span>${esc(c.length)}</span></div>
+      html += `<div class="card" data-inst='${attr(splitInstructors(c.instructor).join("|"))}'><div class="ctime"><strong>${esc(c.startTime || "시간미정")}</strong><span>${esc(c.length)}</span></div>
         <div class="cname">${esc(c.name)}</div>
         <div class="ctags"><span class="tag inst">${esc(c.instructor || "미배정")}</span>${c.habruta ? `<span class="tag">하브루타 ${esc(c.habruta)}</span>` : ""}${c.assistant ? `<span class="tag">보조 ${esc(c.assistant)}</span>` : ""}</div>
         ${c.students ? `<div class="cstu">${esc(c.students)}</div>` : ""}
@@ -386,8 +345,8 @@ function renderMonthly(classes, current) {
       const day = parseInt(iso.slice(8, 10), 10);
       let chips = "";
       if (entry) {
-        for (const c of entry.active) chips += `<span class="mchip" data-inst='${attr(c.instructor || "미배정")}' title="${attr(`${c.startTime} ${c.name} · ${c.instructor}`)}">${esc(c.startTime)} ${esc(c.instructor || c.name)}</span>`;
-        for (const c of entry.off) chips += `<span class="mchip off" data-inst='${attr(c.instructor || "미배정")}' title="${attr(`${c.name} 휴강`)}">휴강 ${esc(c.instructor || c.name)}</span>`;
+        for (const c of entry.active) chips += `<span class="mchip" data-inst='${attr(splitInstructors(c.instructor).join("|"))}' title="${attr(`${c.startTime} ${c.name} · ${c.instructor}`)}">${esc(c.startTime)} ${esc(c.instructor || c.name)}</span>`;
+        for (const c of entry.off) chips += `<span class="mchip off" data-inst='${attr(splitInstructors(c.instructor).join("|"))}' title="${attr(`${c.name} 휴강`)}">휴강 ${esc(c.instructor || c.name)}</span>`;
       }
       grid += `<div class="cell"><span class="cday">${day}</span><div class="citems">${chips}</div></div>`;
     }
@@ -397,34 +356,23 @@ function renderMonthly(classes, current) {
   return html;
 }
 
-function renderSchedule(weekday, classes, current) {
+function renderSchedule(weekday, classes, current, showFilter = true) {
   const total = classes.length;
-  const instructors = summarizeInstructors(classes);
   let html = `<p class="meta">주간 클래스 ${total}건</p>`;
-  html += instructorFilterBar(instructors, total);
+  if (showFilter) html += instructorFilterBar(summarizeInstructors(classes), total);
   html += `<div class="subtabs"><button class="subtab active" data-sub="week">주간</button><button class="subtab" data-sub="month">월간</button></div>`;
   html += `<div class="subview" data-subview="week">${renderWeekly(weekday)}</div>`;
   html += `<div class="subview" data-subview="month" style="display:none">${renderMonthly(classes, current)}</div>`;
   return html;
 }
 
-function renderDropout(result) {
-  let html = `<p class="meta">기간 ${esc(result.windowLabel)} · 이탈 ${result.rows.length}명</p>`;
-  html += table(
-    ["수강생", "종강일", "종강 클래스", "강사", "지역", "연락처", "이메일"],
-    result.rows.map((r) => ({ cells: [`<strong>${esc(r.name)}</strong>`, esc(r.gradDate), esc(r.course), esc(r.instructor || "-"), esc(r.region || "-"), esc(r.contact || "-"), esc(r.email || "-")] })),
-  );
-  return html;
-}
-
-function renderCompleted(rows) {
-  const instructors = summarizeInstructors(rows);
+function renderCompleted(rows, showFilter = true) {
   let html = `<p class="meta">종강 ${rows.length}건 (DONE 그룹)</p>`;
-  html += instructorFilterBar(instructors, rows.length);
+  if (showFilter) html += instructorFilterBar(summarizeInstructors(rows), rows.length);
   html += table(
     ["종강일", "클래스", "강사", "길이/시간", "수강 기간", "수강생"],
     rows.map((c) => ({
-      inst: c.instructor || "미배정",
+      inst: splitInstructors(c.instructor).join("|"),
       cells: [`<strong>${esc(c.endDate || "-")}</strong>`, esc(c.name), `<span class="tag inst">${esc(c.instructor || "미배정")}</span>`, `${esc(c.length || "-")}${c.startTime ? ` · ${esc(c.startTime)}` : ""}`, `${esc(c.startDate)} ~ ${esc(c.endDate)}`, esc(c.students || "-")],
     })),
   );
@@ -465,7 +413,8 @@ th{background:#f8fafc;color:#64748b;font-size:12px}td.empty,.empty{color:#94a3b8
 .gate{display:flex;justify-content:center;padding:80px 20px}
 .gatebox{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:28px;width:320px;text-align:center;box-shadow:0 10px 30px rgba(15,23,42,.06)}
 .gatebox h2{margin:0 0 6px;font-size:18px}.gatebox p{margin:0 0 14px;font-size:13px;color:#64748b}
-.gatebox input{width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:16px;text-align:center;margin-bottom:10px}
+.gateinput{width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:16px;margin-bottom:10px;background:#fff}
+.gatebox input{text-align:center}
 .gatebox button{width:100%;padding:12px;border:0;border-radius:10px;background:#1d4ed8;color:#fff;font-size:15px;cursor:pointer}
 .pwerr{color:#b91c1c;font-size:12px;min-height:16px;margin:10px 0 0}
 @media(max-width:900px){.week,.month,.monthwd{grid-template-columns:1fr}}
@@ -483,7 +432,8 @@ function initViews(){
       view.querySelectorAll('[data-filter-inst]').forEach(function(b){b.classList.remove('active')});
       btn.classList.add('active');
       view.querySelectorAll('[data-inst]').forEach(function(el){
-        el.classList.toggle('hidden', inst!=='' && el.getAttribute('data-inst')!==inst);});});});});
+        var list=(el.getAttribute('data-inst')||'').split('|');
+        el.classList.toggle('hidden', inst!=='' && list.indexOf(inst)<0);});});});});
   document.querySelectorAll('.subtab').forEach(function(b){b.addEventListener('click',function(){
     var wrap=b.closest('.view');
     wrap.querySelectorAll('.subtab').forEach(function(x){x.classList.remove('active')});
@@ -522,15 +472,16 @@ function renderApp(sections) {
   return `<nav>${tabs}</nav><main>${views}</main>`;
 }
 
-function renderPage(sections, generatedAt) {
+function renderPage(sections, generatedAt, subtitle, storageKey) {
   const payload = encryptContent(renderApp(sections), VIEW_PASSWORD);
-  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>어피니티 유니버스 스케줄</title><style>${STYLE}</style></head><body>
-<header><h1>어피니티 유니버스 스케줄</h1><p>먼데이 보드 실시간 매칭 · 갱신: ${esc(generatedAt)}</p></header>
-<div id="gate" class="gate"><div class="gatebox"><h2>접근 비밀번호</h2><p>이 페이지를 보려면 비밀번호를 입력하세요.</p>
-<input id="pw" type="password" inputmode="numeric" placeholder="비밀번호" autocomplete="off"><button id="pwbtn" type="button">확인</button><p id="pwerr" class="pwerr"></p></div></div>
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>어피니티 유니버스 스케줄 · ${esc(subtitle)}</title><style>${STYLE}</style></head><body>
+<header><h1>어피니티 유니버스 스케줄</h1><p>${esc(subtitle)} · 갱신: ${esc(generatedAt)}</p></header>
+<div id="gate" class="gate"><div class="gatebox"><h2>${esc(subtitle)}</h2><p>비밀번호를 입력하세요.</p>
+<input id="pw" class="gateinput" type="password" inputmode="numeric" placeholder="비밀번호" autocomplete="off"><button id="pwbtn" type="button">확인</button><p id="pwerr" class="pwerr"></p></div></div>
 <div id="app"></div>
 <script>
 var PAYLOAD=${JSON.stringify(payload)};
+var SKEY=${JSON.stringify(`afv_pw_${storageKey}`)};
 ${SCRIPT}
 function b64ToBytes(s){return Uint8Array.from(atob(s),function(c){return c.charCodeAt(0);});}
 async function decryptContent(pw){
@@ -547,12 +498,12 @@ async function unlock(){
     document.getElementById('app').innerHTML=html;
     document.getElementById('gate').style.display='none';
     initViews();
-    try{sessionStorage.setItem('afv_pw',pw);}catch(e){}
+    try{sessionStorage.setItem(SKEY,pw);}catch(e){}
   }catch(e){document.getElementById('pwerr').textContent='비밀번호가 올바르지 않습니다.';}
 }
 document.getElementById('pwbtn').addEventListener('click',unlock);
 document.getElementById('pw').addEventListener('keydown',function(e){if(e.key==='Enter')unlock();});
-(function(){try{var s=sessionStorage.getItem('afv_pw');if(s){document.getElementById('pw').value=s;unlock();}}catch(e){}})();
+(function(){try{var s=sessionStorage.getItem(SKEY);if(s){document.getElementById('pw').value=s;unlock();}}catch(e){}})();
 </script></body></html>`;
 }
 
@@ -569,28 +520,61 @@ async function main() {
   const weekday = new Map(WEEKDAYS.map((d) => [d.key, []]));
   for (const c of weekdayClasses) weekday.get(c.group.toUpperCase()).push(c);
   for (const list of weekday.values()) list.sort((a, b) => a.startMin - b.startMin);
-  const dropout = computeDropouts(cls.items, db.items, now);
   const completed = mapCompleted(cls.items);
   const current = { y: now.getFullYear(), mo: now.getMonth() };
+  // 강사 목록 (스케줄 + 종강 강사 합집합, 개별 이름)
+  const instructors = summarizeInstructors([...weekdayClasses, ...completed]).map((i) => i.name);
 
   const generatedAt = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "long", timeStyle: "short" }).format(now);
 
-  const html = renderPage(
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+  fs.writeFileSync(path.join(OUT_DIR, ".nojekyll"), "", "utf8");
+
+  // ── 관리자(루트): 전체 ──
+  const adminHtml = renderPage(
     [
-      { id: "schedule", label: "강사 스케줄", html: renderSchedule(weekday, weekdayClasses, current) },
-      { id: "dropout", label: "이탈 리스트", html: renderDropout(dropout) },
-      { id: "completed", label: "종강 리스트", html: renderCompleted(completed) },
+      { id: "schedule", label: "강사 스케줄", html: renderSchedule(weekday, weekdayClasses, current, true) },
+      { id: "completed", label: "종강 리스트", html: renderCompleted(completed, true) },
       { id: "students", label: "수강생 DB", html: renderStudents(students) },
     ],
     generatedAt,
+    "관리자 (전체)",
+    "admin",
   );
+  fs.writeFileSync(path.join(OUT_DIR, "index.html"), adminHtml, "utf8");
 
-  fs.mkdirSync(OUT_DIR, { recursive: true });
-  fs.writeFileSync(path.join(OUT_DIR, "index.html"), html, "utf8");
-  fs.writeFileSync(path.join(OUT_DIR, ".nojekyll"), "", "utf8");
+  // ── 강사별 페이지: /강사명/ (본인 클래스만) ──
+  const hasInstructor = (c, name) => splitInstructors(c.instructor).indexOf(name) >= 0;
+  const buildWeekday = (list) => {
+    const map = new Map(WEEKDAYS.map((d) => [d.key, []]));
+    for (const c of list) map.get(c.group.toUpperCase()).push(c);
+    for (const l of map.values()) l.sort((a, b) => a.startMin - b.startMin);
+    return map;
+  };
+  const links = [];
+  for (const name of instructors) {
+    if (name === "미배정") continue;
+    const myWeek = weekdayClasses.filter((c) => hasInstructor(c, name));
+    const myDone = completed.filter((c) => hasInstructor(c, name));
+    const page = renderPage(
+      [
+        { id: "schedule", label: "강사 스케줄", html: renderSchedule(buildWeekday(myWeek), myWeek, current, false) },
+        { id: "completed", label: "종강 리스트", html: renderCompleted(myDone, false) },
+      ],
+      generatedAt,
+      `${name} 강사`,
+      name,
+    );
+    const dir = path.join(OUT_DIR, name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "index.html"), page, "utf8");
+    links.push(`/${encodeURI(name)}/  (주간 ${myWeek.length} · 종강 ${myDone.length})`);
+  }
+
   const totalStudents = students.reduce((s, g) => s + g.rows.length, 0);
-  console.log(`완료: 수강생 ${totalStudents} · 주간클래스 ${weekdayClasses.length} · 이탈 ${dropout.rows.length} · 종강 ${completed.length}`);
-  console.log(`출력: ${path.join(OUT_DIR, "index.html")}`);
+  console.log(`완료: 수강생 ${totalStudents} · 주간클래스 ${weekdayClasses.length} · 종강 ${completed.length} · 강사페이지 ${links.length}`);
+  console.log(`관리자: /  (전체)`);
+  links.forEach((l) => console.log("강사:", l));
 }
 
 main().catch((err) => {
