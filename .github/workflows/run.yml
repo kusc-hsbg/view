@@ -1,6 +1,7 @@
 name: Daily Monday Views
 
 on:
+
   push:
     branches: [main]
   workflow_dispatch: {}
