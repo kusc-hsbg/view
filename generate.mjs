@@ -230,7 +230,7 @@ function summarizeInstructors(classes) {
 function table(headers, rows) {
   const head = headers.map((h) => `<th>${esc(h)}</th>`).join("");
   const body = rows.map((r) => `<tr${r.inst != null ? ` data-inst='${attr(r.inst)}'` : ""}>${r.cells.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("");
-  return `<table><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td colspan="${headers.length}" class="empty">데이터 없음</td></tr>`}</tbody></table>`;
+  return `<div class="tablewrap"><table><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td colspan="${headers.length}" class="empty">데이터 없음</td></tr>`}</tbody></table></div>`;
 }
 
 function renderStudents(groups) {
@@ -330,6 +330,7 @@ function renderMonthly(classes, current) {
   if (startIdx < 0) startIdx = months.length - 1;
 
   let html = `<div class="monthnav"><button id="mprev" class="navbtn">이전</button><strong id="mlabel"></strong><button id="mnext" class="navbtn">다음</button></div>`;
+  html += `<div class="monthscroll"><div class="monthinner">`;
   html += `<div class="monthwd">${MONTH_DOW.map((d) => `<span>${d}</span>`).join("")}</div>`;
   html += `<div id="months" data-start="${startIdx}">`;
   months.forEach((mm, idx) => {
@@ -352,7 +353,7 @@ function renderMonthly(classes, current) {
     }
     html += `<div class="month" data-month="${idx}" data-label="${label}" style="display:${idx === startIdx ? "grid" : "none"}">${grid}</div>`;
   });
-  html += `</div>`;
+  html += `</div></div></div>`;
   return html;
 }
 
@@ -389,7 +390,8 @@ main{padding:20px 24px;max-width:1400px;margin:0 auto}
 .view{display:none}.view.active{display:block}.hidden{display:none!important}
 .meta{color:#475569;font-size:13px;margin:0 0 12px}
 .grp{font-size:14px;background:#eef2ff;padding:8px 12px;border-radius:8px;margin:18px 0 8px}.grp span{color:#64748b;font-weight:400}
-table{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;font-size:13px;margin-bottom:8px}
+.tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-bottom:8px;border-radius:10px}
+table{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;font-size:13px}
 th,td{text-align:left;padding:10px 12px;border-bottom:1px solid #eef2f6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
 th{background:#f8fafc;color:#64748b;font-size:12px}td.empty,.empty{color:#94a3b8;text-align:center;padding:14px}
 .badge{padding:2px 10px;border-radius:999px;background:#f1f5f9;color:#64748b;font-size:12px;font-weight:600}.badge.on{background:#d1fae5;color:#047857}
@@ -405,6 +407,7 @@ th{background:#f8fafc;color:#64748b;font-size:12px}td.empty,.empty{color:#94a3b8
 .ctags{display:flex;flex-wrap:wrap;gap:4px}.tag{font-size:11px;padding:2px 8px;border-radius:999px;background:#f1f5f9;color:#475569}.tag.inst{background:#dbeafe;color:#1e40af;font-weight:600}
 .cstu{font-size:12px;color:#334155;margin-top:4px}.cper{font-size:11px;color:#94a3b8;margin-top:4px}.offt{color:#b91c1c}
 .monthnav{display:flex;justify-content:center;align-items:center;gap:14px;margin-bottom:10px}.navbtn{border:1px solid #e2e8f0;background:#f8fafc;border-radius:8px;padding:4px 12px;cursor:pointer}
+.monthscroll{overflow-x:auto;-webkit-overflow-scrolling:touch}.monthinner{min-width:640px}
 .monthwd{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px}.monthwd span{text-align:center;font-size:12px;color:#64748b;font-weight:600}
 .month{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
 .cell{min-height:92px;border:1px solid #e2e8f0;border-radius:10px;padding:6px;background:#fff;display:flex;flex-direction:column;gap:3px;overflow:hidden}.cell.empty-cell{background:transparent;border-color:transparent}
@@ -417,7 +420,14 @@ th{background:#f8fafc;color:#64748b;font-size:12px}td.empty,.empty{color:#94a3b8
 .gatebox input{text-align:center}
 .gatebox button{width:100%;padding:12px;border:0;border-radius:10px;background:#1d4ed8;color:#fff;font-size:15px;cursor:pointer}
 .pwerr{color:#b91c1c;font-size:12px;min-height:16px;margin:10px 0 0}
-@media(max-width:900px){.week,.month,.monthwd{grid-template-columns:1fr}}
+@media(max-width:900px){.week{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:640px){
+  header{padding:14px 16px}nav{padding:10px 12px;gap:5px}nav button{padding:7px 12px;font-size:13px}
+  main{padding:14px 12px}
+  .week{grid-template-columns:1fr}
+  th,td{max-width:none}
+  .gate{padding:48px 16px}.gatebox{width:100%;max-width:340px;padding:22px}
+}
 `;
 
 const SCRIPT = `
