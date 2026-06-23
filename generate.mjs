@@ -128,6 +128,10 @@ function timeToMin(raw) {
   if (m[3] === "AM" && h === 12) h = 0;
   return h * 60 + min;
 }
+const isAM = (raw) => {
+  const min = timeToMin(raw);
+  return min < 720;
+};
 function addDaysIso(iso, days) {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -272,7 +276,7 @@ function renderWeekly(weekday) {
     html += `<div class="daycol"><div class="dayhead">${d.label} <span>${list.length}</span></div>`;
     if (list.length === 0) html += `<p class="empty">수업 없음</p>`;
     for (const c of list) {
-      html += `<div class="card" data-inst='${attr(splitInstructors(c.instructor).join("|"))}'><div class="ctime"><strong>${esc(c.startTime || "시간미정")}</strong><span>${esc(c.length)}</span></div>
+      html += `<div class="card${isAM(c.startTime) ? " am" : ""}" data-inst='${attr(splitInstructors(c.instructor).join("|"))}'><div class="ctime"><strong>${esc(c.startTime || "시간미정")}</strong><span>${esc(c.length)}</span></div>
         <div class="cname">${esc(c.name)}</div>
         <div class="ctags"><span class="tag inst">${esc(c.instructor || "미배정")}</span>${c.habruta ? `<span class="tag">하브루타 ${esc(c.habruta)}</span>` : ""}${c.assistant ? `<span class="tag">보조 ${esc(c.assistant)}</span>` : ""}</div>
         ${c.students ? `<div class="cstu">${esc(c.students)}</div>` : ""}
@@ -346,7 +350,7 @@ function renderMonthly(classes, current) {
       const day = parseInt(iso.slice(8, 10), 10);
       let chips = "";
       if (entry) {
-        for (const c of entry.active) chips += `<span class="mchip" data-inst='${attr(splitInstructors(c.instructor).join("|"))}' title="${attr(`${c.startTime} ${c.name} · ${c.instructor}`)}">${esc(c.startTime)} ${esc(c.instructor || c.name)}</span>`;
+        for (const c of entry.active) chips += `<span class="mchip${isAM(c.startTime) ? " am" : ""}" data-inst='${attr(splitInstructors(c.instructor).join("|"))}' title="${attr(`${c.startTime} ${c.name} · ${c.instructor}`)}">${esc(c.startTime)} ${esc(c.instructor || c.name)}</span>`;
         for (const c of entry.off) chips += `<span class="mchip off" data-inst='${attr(splitInstructors(c.instructor).join("|"))}' title="${attr(`${c.name} 휴강`)}">휴강 ${esc(c.instructor || c.name)}</span>`;
       }
       grid += `<div class="cell"><span class="cday">${day}</span><div class="citems">${chips}</div></div>`;
@@ -402,7 +406,7 @@ th{background:#f8fafc;color:#64748b;font-size:12px}td.empty,.empty{color:#94a3b8
 .daycol{background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden}
 .dayhead{background:#f5f8ff;padding:8px 10px;font-weight:700;display:flex;justify-content:space-between}.dayhead span{color:#64748b;font-weight:400}
 .card{border:1px solid #eef2f6;border-radius:10px;margin:8px;padding:8px}
-.ctime{display:flex;justify-content:space-between}.ctime strong{color:#1d4ed8}.ctime span{color:#64748b;font-size:11px}
+.ctime{display:flex;justify-content:space-between}.ctime strong{color:#1d4ed8}.ctime span{color:#64748b;font-size:11px}.card.am .ctime strong{color:#ea580c}
 .cname{font-size:13px;font-weight:600;margin:4px 0}
 .ctags{display:flex;flex-wrap:wrap;gap:4px}.tag{font-size:11px;padding:2px 8px;border-radius:999px;background:#f1f5f9;color:#475569}.tag.inst{background:#dbeafe;color:#1e40af;font-weight:600}
 .cstu{font-size:12px;color:#334155;margin-top:4px}.cper{font-size:11px;color:#94a3b8;margin-top:4px}.offt{color:#b91c1c}
@@ -412,7 +416,7 @@ th{background:#f8fafc;color:#64748b;font-size:12px}td.empty,.empty{color:#94a3b8
 .month{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
 .cell{min-height:92px;border:1px solid #e2e8f0;border-radius:10px;padding:6px;background:#fff;display:flex;flex-direction:column;gap:3px;overflow:hidden}.cell.empty-cell{background:transparent;border-color:transparent}
 .cday{font-size:12px;font-weight:600;color:#475569}.citems{display:flex;flex-direction:column;gap:3px;overflow:hidden}
-.mchip{font-size:10px;padding:1px 5px;border-radius:6px;background:#e0e7ff;color:#3730a3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mchip.off{background:#fee2e2;color:#b91c1c}
+.mchip{font-size:10px;padding:1px 5px;border-radius:6px;background:#e0e7ff;color:#3730a3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mchip.am{background:#ffedd5;color:#9a3412}.mchip.off{background:#fee2e2;color:#b91c1c}
 .gate{display:flex;justify-content:center;padding:80px 20px}
 .gatebox{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:28px;width:320px;text-align:center;box-shadow:0 10px 30px rgba(15,23,42,.06)}
 .gatebox h2{margin:0 0 6px;font-size:18px}.gatebox p{margin:0 0 14px;font-size:13px;color:#64748b}
