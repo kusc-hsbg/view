@@ -74,11 +74,14 @@ async function mondayQuery(query) {
   return null;
 }
 
-async function fetchBoardItems(boardId, columnIds) {
+async function fetchBoardItems(boardId, columnIds, subColumnIds = null) {
   const ids = JSON.stringify(columnIds);
   const frags =
     "... on MirrorValue { display_value } ... on BoardRelationValue { display_value } ... on FormulaValue { display_value }";
-  const query = `query { boards(ids: ${boardId}) { name items_page(limit: 500) { items { id name group { id title } column_values(ids: ${ids}) { id text value ${frags} } } } } }`;
+  const sub = subColumnIds
+    ? ` subitems { id name column_values(ids: ${JSON.stringify(subColumnIds)}) { id text } }`
+    : "";
+  const query = `query { boards(ids: ${boardId}) { name items_page(limit: 500) { items { id name group { id title } column_values(ids: ${ids}) { id text value ${frags} }${sub} } } } }`;
   const data = await mondayQuery(query);
   const board = data?.boards?.[0] || null;
   return { name: board?.name || "", items: board?.items_page?.items || [] };
@@ -137,6 +140,31 @@ function addDaysIso(iso, days) {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
+// 해당 날짜가 속한 주의 월요일(ISO) 반환
+function mondayOf(iso) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  const dow = d.getUTCDay(); // 0=일 … 6=토
+  d.setUTCDate(d.getUTCDate() + (dow === 0 ? -6 : 1 - dow));
+  return d.toISOString().slice(0, 10);
+}
+// 하위아이템(레슨) 파싱: "LESSON 01" 처럼 깔끔히 떨어지는 것만 회차로 인정.
+// 그 외(공휴일 휴강 등)는 휴강 날짜로 처리.
+const LESSON_RE = /^LESSON\s+0*(\d+)$/i;
+function parseLessons(it) {
+  const lessons = []; // { date, no }
+  const offs = []; // iso
+  for (const s of it.subitems || []) {
+    const m = byId(s);
+    const date = (textOf(m, "date65").match(/\d{4}-\d{2}-\d{2}/) || [""])[0];
+    if (!date) continue;
+    // 이름에서 이모지/플래그 제거 후 "LESSON N" 정확 매칭
+    const clean = N(s.name).replace(/[\p{Extended_Pictographic}\p{Regional_Indicator}]/gu, "").replace(/\s+/g, " ").trim();
+    const lm = clean.match(LESSON_RE);
+    if (lm) lessons.push({ date, no: parseInt(lm[1], 10) });
+    else offs.push(date);
+  }
+  return { lessons, offs };
+}
 function deriveOffDates(dates) {
   if (dates.length < 2) return [];
   const present = new Set(dates);
@@ -186,9 +214,23 @@ function mapStudents(items) {
 
 function mapClass(it) {
   const m = byId(it);
-  const dates = parseDates(displayOf(m, "lookup") || textOf(m, "lookup"));
   const group = N(it.groupTitle || it.group?.title);
   const hab = displayOf(m, "formula_mkzy2qad");
+
+  // 날짜·회차: 하위아이템(레슨)에서 직접 구성. 하위아이템이 없으면 미러(TIMELINE)로 폴백.
+  const { lessons, offs } = parseLessons(it);
+  let dates;
+  let offDates;
+  const lessonByDate = {};
+  if (lessons.length || offs.length) {
+    for (const l of lessons) lessonByDate[l.date] = l.no;
+    dates = Array.from(new Set(lessons.map((l) => l.date))).sort();
+    offDates = Array.from(new Set(offs)).sort();
+  } else {
+    dates = parseDates(displayOf(m, "lookup") || textOf(m, "lookup"));
+    offDates = deriveOffDates(dates);
+  }
+
   return {
     name: N(it.name) || "이름 없음",
     group,
@@ -200,9 +242,10 @@ function mapClass(it) {
     assistant: textOf(m, "multiple_person_mkywhxez"),
     students: displayOf(m, "board_relation_mkss72aq") || textOf(m, "board_relation_mkss72aq"),
     dates,
+    lessonByDate,
     startDate: dates[0] || "",
     endDate: dates[dates.length - 1] || "",
-    offDates: deriveOffDates(dates),
+    offDates,
   };
 }
 
@@ -269,22 +312,74 @@ function instructorFilterBar(instructors, total) {
   return `${html}</div>`;
 }
 
-function renderWeekly(weekday) {
-  let html = `<div class="week">`;
-  for (const d of WEEKDAYS) {
-    const list = weekday.get(d.key) || [];
-    html += `<div class="daycol"><div class="dayhead">${d.label} <span>${list.length}</span></div>`;
-    if (list.length === 0) html += `<p class="empty">수업 없음</p>`;
-    for (const c of list) {
-      html += `<div class="card${isAM(c.startTime) ? " am" : ""}" data-inst='${attr(splitInstructors(c.instructor).join("|"))}'><div class="ctime"><strong>${esc(c.startTime || "시간미정")}</strong><span>${esc(c.length)}</span></div>
-        <div class="cname">${esc(c.name)}</div>
-        <div class="ctags"><span class="tag inst">${esc(c.instructor || "미배정")}</span>${c.habruta ? `<span class="tag">하브루타 ${esc(c.habruta)}</span>` : ""}${c.assistant ? `<span class="tag">보조 ${esc(c.assistant)}</span>` : ""}</div>
-        ${c.students ? `<div class="cstu">${esc(c.students)}</div>` : ""}
-        <div class="cper">${esc(c.startDate)} ~ ${esc(c.endDate)}${c.offDates.length ? ` <span class="offt">휴강 ${c.offDates.length}</span>` : ""}</div></div>`;
+// 주간: 한 달치(1주차~5주차)를 주 단위로 넘겨보는 뷰. 각 요일 헤더에 실제 날짜를 표기하고,
+// 그 날짜에 해당하는 레슨만 표시한다(다음 주/다음 달은 넘기기 전까지 보이지 않음).
+function renderWeekly(classes, todayIso) {
+  const byDate = new Map();
+  const ensure = (iso) => {
+    if (!byDate.has(iso)) byDate.set(iso, { active: [], off: [] });
+    return byDate.get(iso);
+  };
+  let min = null;
+  let max = null;
+  for (const c of classes) {
+    for (const iso of c.dates) {
+      ensure(iso).active.push(c);
+      if (!min || iso < min) min = iso;
+      if (!max || iso > max) max = iso;
     }
-    html += `</div>`;
+    for (const iso of c.offDates) ensure(iso).off.push(c);
   }
-  return `${html}</div>`;
+  if (!min) return `<p class="empty">표시할 일정이 없습니다.</p>`;
+
+  // min~max 를 덮는 월요일 목록
+  const weeks = [];
+  let wk = mondayOf(min);
+  const lastMon = mondayOf(max);
+  let guard = 0;
+  while (wk <= lastMon && guard < 260) {
+    weeks.push(wk);
+    wk = addDaysIso(wk, 7);
+    guard += 1;
+  }
+  const curMon = mondayOf(todayIso);
+  let startIdx = weeks.indexOf(curMon);
+  if (startIdx < 0) startIdx = weeks.findIndex((w) => w >= curMon);
+  if (startIdx < 0) startIdx = weeks.length - 1;
+
+  let html = `<div class="monthnav"><button id="wprev" class="navbtn">이전</button><strong id="wlabel"></strong><button id="wnext" class="navbtn">다음</button></div>`;
+  html += `<div id="weeks" data-start="${startIdx}">`;
+  weeks.forEach((mon, idx) => {
+    const monDay = parseInt(mon.slice(8, 10), 10);
+    const kOfMonth = Math.floor((monDay - 1) / 7) + 1;
+    const end = addDaysIso(mon, 5);
+    const label = `${mon.slice(0, 4)}.${mon.slice(5, 7)} ${kOfMonth}주차 (${mon.slice(5, 7)}.${mon.slice(8, 10)}~${end.slice(5, 7)}.${end.slice(8, 10)})`;
+    let grid = `<div class="week">`;
+    WEEKDAYS.forEach((d, di) => {
+      const iso = addDaysIso(mon, di);
+      const entry = byDate.get(iso);
+      const dd = parseInt(iso.slice(8, 10), 10);
+      grid += `<div class="daycol"><div class="dayhead${iso === todayIso ? " today" : ""}">${d.label} <span>${dd}일</span></div>`;
+      const act = (entry ? entry.active : []).slice().sort((a, b) => a.startMin - b.startMin);
+      const offl = entry ? entry.off : [];
+      if (act.length === 0 && offl.length === 0) grid += `<p class="empty">·</p>`;
+      for (const c of act) {
+        const no = c.lessonByDate[iso];
+        grid += `<div class="card${isAM(c.startTime) ? " am" : ""}" data-inst='${attr(splitInstructors(c.instructor).join("|"))}'><div class="ctime"><strong>${esc(c.startTime || "시간미정")}</strong><span>${esc(c.length)}</span></div>
+          <div class="cname">${esc(c.name)}</div>
+          <div class="ctags">${no ? `<span class="tag lesson">${no}강</span>` : ""}<span class="tag inst">${esc(c.instructor || "미배정")}</span>${c.habruta ? `<span class="tag">하브루타 ${esc(c.habruta)}</span>` : ""}${c.assistant ? `<span class="tag">보조 ${esc(c.assistant)}</span>` : ""}</div>
+          ${c.students ? `<div class="cstu">${esc(c.students)}</div>` : ""}</div>`;
+      }
+      for (const c of offl) {
+        grid += `<div class="card off" data-inst='${attr(splitInstructors(c.instructor).join("|"))}'><div class="cname">휴강</div><div class="ctags"><span class="tag inst">${esc(c.instructor || "미배정")}</span></div><div class="cstu">${esc(c.name)}</div></div>`;
+      }
+      grid += `</div>`;
+    });
+    grid += `</div>`;
+    html += `<div class="wk" data-week="${idx}" data-label="${attr(label)}" style="display:${idx === startIdx ? "block" : "none"}">${grid}</div>`;
+  });
+  html += `</div>`;
+  return html;
 }
 
 function buildMonthGrid(year, month) {
@@ -350,7 +445,10 @@ function renderMonthly(classes, current) {
       const day = parseInt(iso.slice(8, 10), 10);
       let chips = "";
       if (entry) {
-        for (const c of entry.active) chips += `<span class="mchip${isAM(c.startTime) ? " am" : ""}" data-inst='${attr(splitInstructors(c.instructor).join("|"))}' title="${attr(`${c.startTime} ${c.name} · ${c.instructor}`)}">${esc(c.startTime)} ${esc(c.instructor || c.name)}</span>`;
+        for (const c of entry.active) {
+          const no = c.lessonByDate[iso];
+          chips += `<span class="mchip${isAM(c.startTime) ? " am" : ""}" data-inst='${attr(splitInstructors(c.instructor).join("|"))}' title="${attr(`${c.startTime} ${no ? `${no}강 ` : ""}${c.name} · ${c.instructor}`)}">${esc(c.startTime)} ${no ? `${no}강 ` : ""}${esc(c.instructor || c.name)}</span>`;
+        }
         for (const c of entry.off) chips += `<span class="mchip off" data-inst='${attr(splitInstructors(c.instructor).join("|"))}' title="${attr(`${c.name} 휴강`)}">휴강 ${esc(c.instructor || c.name)}</span>`;
       }
       grid += `<div class="cell"><span class="cday">${day}</span><div class="citems">${chips}</div></div>`;
@@ -361,12 +459,12 @@ function renderMonthly(classes, current) {
   return html;
 }
 
-function renderSchedule(weekday, classes, current, showFilter = true) {
+function renderSchedule(classes, current, todayIso, showFilter = true) {
   const total = classes.length;
   let html = `<p class="meta">주간 클래스 ${total}건</p>`;
   if (showFilter) html += instructorFilterBar(summarizeInstructors(classes), total);
   html += `<div class="subtabs"><button class="subtab active" data-sub="week">주간</button><button class="subtab" data-sub="month">월간</button></div>`;
-  html += `<div class="subview" data-subview="week">${renderWeekly(weekday)}</div>`;
+  html += `<div class="subview" data-subview="week">${renderWeekly(classes, todayIso)}</div>`;
   html += `<div class="subview" data-subview="month" style="display:none">${renderMonthly(classes, current)}</div>`;
   return html;
 }
@@ -405,10 +503,12 @@ th{background:#f8fafc;color:#64748b;font-size:12px}td.empty,.empty{color:#94a3b8
 .week{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
 .daycol{background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden}
 .dayhead{background:#f5f8ff;padding:8px 10px;font-weight:700;display:flex;justify-content:space-between}.dayhead span{color:#64748b;font-weight:400}
+.dayhead.today{background:#1d4ed8;color:#fff}.dayhead.today span{color:#dbeafe}
 .card{border:1px solid #eef2f6;border-radius:10px;margin:8px;padding:8px}
 .ctime{display:flex;justify-content:space-between}.ctime strong{color:#1d4ed8}.ctime span{color:#64748b;font-size:11px}.card.am .ctime strong{color:#ea580c}
 .cname{font-size:13px;font-weight:600;margin:4px 0}
-.ctags{display:flex;flex-wrap:wrap;gap:4px}.tag{font-size:11px;padding:2px 8px;border-radius:999px;background:#f1f5f9;color:#475569}.tag.inst{background:#dbeafe;color:#1e40af;font-weight:600}
+.ctags{display:flex;flex-wrap:wrap;gap:4px}.tag{font-size:11px;padding:2px 8px;border-radius:999px;background:#f1f5f9;color:#475569}.tag.inst{background:#dbeafe;color:#1e40af;font-weight:600}.tag.lesson{background:#dcfce7;color:#15803d;font-weight:700}
+.card.off{background:#fafafa;opacity:.75}.card.off .cname{color:#b91c1c}
 .cstu{font-size:12px;color:#334155;margin-top:4px}.cper{font-size:11px;color:#94a3b8;margin-top:4px}.offt{color:#b91c1c}
 .monthnav{display:flex;justify-content:center;align-items:center;gap:14px;margin-bottom:10px}.navbtn{border:1px solid #e2e8f0;background:#f8fafc;border-radius:8px;padding:4px 12px;cursor:pointer}
 .monthscroll{overflow-x:auto;-webkit-overflow-scrolling:touch}.monthinner{min-width:640px}
@@ -453,6 +553,15 @@ function initViews(){
     wrap.querySelectorAll('.subtab').forEach(function(x){x.classList.remove('active')});
     b.classList.add('active');
     wrap.querySelectorAll('.subview').forEach(function(v){v.style.display=(v.getAttribute('data-subview')===b.dataset.sub)?'block':'none';});});});
+  var wbox=document.getElementById('weeks');if(wbox){
+    var wks=Array.prototype.slice.call(wbox.querySelectorAll('.wk'));
+    var widx=parseInt(wbox.getAttribute('data-start'),10)||0;
+    function wshow(){wks.forEach(function(w,i){w.style.display=(i===widx)?'block':'none';});
+      var wl=document.getElementById('wlabel');if(wl)wl.textContent=wks[widx]?wks[widx].getAttribute('data-label'):'';}
+    var wp=document.getElementById('wprev'),wn=document.getElementById('wnext');
+    if(wp)wp.onclick=function(){if(widx>0){widx--;wshow();}};
+    if(wn)wn.onclick=function(){if(widx<wks.length-1){widx++;wshow();}};
+    wshow();}
   var box=document.getElementById('months');if(box){
     var months=Array.prototype.slice.call(box.querySelectorAll('.month'));
     var idx=parseInt(box.getAttribute('data-start'),10)||0;
@@ -526,16 +635,14 @@ async function main() {
   console.log("먼데이 보드 조회 중…");
   const [db, cls] = await Promise.all([
     fetchBoardItems(STUDENT_BOARD, ["date4", "color_mknkc0rw", "text_mknkvpaq", "link", "text_mktj6gkp", "text_mksvtgc8", "formula_mkv1sj2z"]),
-    fetchBoardItems(CLASS_BOARD, ["color_mm07m65v", "hour", "lookup", "project_owner", "formula_mkzy2qad", "multiple_person_mkywhxez", "board_relation_mkss72aq"]),
+    fetchBoardItems(CLASS_BOARD, ["color_mm07m65v", "hour", "lookup", "project_owner", "formula_mkzy2qad", "multiple_person_mkywhxez", "board_relation_mkss72aq"], ["date65"]),
   ]);
 
   const students = mapStudents(db.items);
   const weekdayClasses = mapWeekdayClasses(cls.items);
-  const weekday = new Map(WEEKDAYS.map((d) => [d.key, []]));
-  for (const c of weekdayClasses) weekday.get(c.group.toUpperCase()).push(c);
-  for (const list of weekday.values()) list.sort((a, b) => a.startMin - b.startMin);
   const completed = mapCompleted(cls.items);
-  const current = { y: now.getFullYear(), mo: now.getMonth() };
+  const todayIso = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(now); // YYYY-MM-DD (KST)
+  const current = { y: parseInt(todayIso.slice(0, 4), 10), mo: parseInt(todayIso.slice(5, 7), 10) - 1 };
   // 강사 목록 (스케줄 + 종강 강사 합집합, 개별 이름)
   const instructors = summarizeInstructors([...weekdayClasses, ...completed]).map((i) => i.name);
 
@@ -547,7 +654,7 @@ async function main() {
   // ── 관리자(루트): 전체 ──
   const adminHtml = renderPage(
     [
-      { id: "schedule", label: "강사 스케줄", html: renderSchedule(weekday, weekdayClasses, current, true) },
+      { id: "schedule", label: "강사 스케줄", html: renderSchedule(weekdayClasses, current, todayIso, true) },
       { id: "completed", label: "종강 리스트", html: renderCompleted(completed, true) },
       { id: "students", label: "수강생 DB", html: renderStudents(students) },
     ],
@@ -559,12 +666,6 @@ async function main() {
 
   // ── 강사별 페이지: /강사명/ (본인 클래스만) ──
   const hasInstructor = (c, name) => splitInstructors(c.instructor).indexOf(name) >= 0;
-  const buildWeekday = (list) => {
-    const map = new Map(WEEKDAYS.map((d) => [d.key, []]));
-    for (const c of list) map.get(c.group.toUpperCase()).push(c);
-    for (const l of map.values()) l.sort((a, b) => a.startMin - b.startMin);
-    return map;
-  };
   const links = [];
   for (const name of instructors) {
     if (name === "미배정") continue;
@@ -572,7 +673,7 @@ async function main() {
     const myDone = completed.filter((c) => hasInstructor(c, name));
     const page = renderPage(
       [
-        { id: "schedule", label: "강사 스케줄", html: renderSchedule(buildWeekday(myWeek), myWeek, current, false) },
+        { id: "schedule", label: "강사 스케줄", html: renderSchedule(myWeek, current, todayIso, false) },
         { id: "completed", label: "종강 리스트", html: renderCompleted(myDone, false) },
       ],
       generatedAt,
