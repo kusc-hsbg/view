@@ -507,7 +507,7 @@ th{background:#f8fafc;color:#64748b;font-size:12px}td.empty,.empty{color:#94a3b8
 .card{border:1px solid #eef2f6;border-radius:10px;margin:8px;padding:8px}
 .ctime{display:flex;justify-content:space-between}.ctime strong{color:#1d4ed8}.ctime span{color:#64748b;font-size:11px}.card.am .ctime strong{color:#ea580c}
 .cname{font-size:13px;font-weight:600;margin:4px 0}
-.ctags{display:flex;flex-wrap:wrap;gap:4px}.tag{font-size:11px;padding:2px 8px;border-radius:999px;background:#f1f5f9;color:#475569}.tag.inst{background:#dbeafe;color:#1e40af;font-weight:600}.tag.lesson{background:#dcfce7;color:#15803d;font-weight:700}
+.ctags{display:flex;flex-wrap:wrap;gap:4px}.tag{font-size:11px;padding:2px 8px;border-radius:999px;background:#f1f5f9;color:#475569}.tag.inst{background:#dbeafe;color:#1e40af;font-weight:600}.tag.lesson{background:#fef9c3;color:#a16207;font-weight:700}
 .card.off{background:#fafafa;opacity:.75}.card.off .cname{color:#b91c1c}
 .cstu{font-size:12px;color:#334155;margin-top:4px}.cper{font-size:11px;color:#94a3b8;margin-top:4px}.offt{color:#b91c1c}
 .monthnav{display:flex;justify-content:center;align-items:center;gap:14px;margin-bottom:10px}.navbtn{border:1px solid #e2e8f0;background:#f8fafc;border-radius:8px;padding:4px 12px;cursor:pointer}
