@@ -29,6 +29,9 @@ if (!TOKEN) {
 // 페이지 접근 비밀번호. 데이터는 이 비밀번호로 암호화되어, 입력 시에만 복호화됩니다.
 const VIEW_PASSWORD = (process.env.VIEW_PASSWORD || "5000").trim();
 
+const INSTRUCTOR_NAME_MAP = { JIMIN: "DOORI" };
+const INSTRUCTOR_ORDER = ["ZOEY", "HANNAH", "SION", "SYEON", "SHU", "SEONYE", "ONYU", "RARA", "DOORI"];
+
 const STUDENT_BOARD = "1879266175";
 const CLASS_BOARD = "1888467610";
 const DONE_GROUP_TITLE = "DONE";
@@ -263,7 +266,7 @@ function mapCompleted(classItems) {
 
 // project_owner 가 "A, B" 처럼 2명이면 각각의 개별 강사로 분리.
 function splitInstructors(text) {
-  const names = N(text).split(",").map((s) => N(s)).filter(Boolean);
+  const names = N(text).split(",").map((s) => { const n = N(s); return INSTRUCTOR_NAME_MAP[n] || n; }).filter(Boolean);
   return names.length ? names : ["미배정"];
 }
 
@@ -307,8 +310,16 @@ function renderStudents(groups) {
 }
 
 function instructorFilterBar(instructors, total) {
+  const ordered = instructors.slice().sort((a, b) => {
+    const ai = INSTRUCTOR_ORDER.indexOf(a.name);
+    const bi = INSTRUCTOR_ORDER.indexOf(b.name);
+    if (ai < 0 && bi < 0) return a.name.localeCompare(b.name);
+    if (ai < 0) return 1;
+    if (bi < 0) return -1;
+    return ai - bi;
+  });
   let html = `<div class="filter"><span class="flabel">강사 필터</span><button class="chip active" data-filter-inst="">전체 <b>${total}</b></button>`;
-  for (const i of instructors) html += `<button class="chip" data-filter-inst="${attr(i.name)}">${esc(i.name)} <b>${i.count}</b></button>`;
+  for (const i of ordered) html += `<button class="chip" data-filter-inst="${attr(i.name)}">${esc(i.name)} <b>${i.count}</b></button>`;
   return `${html}</div>`;
 }
 
