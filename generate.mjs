@@ -29,7 +29,7 @@ if (!TOKEN) {
 // 페이지 접근 비밀번호. 데이터는 이 비밀번호로 암호화되어, 입력 시에만 복호화됩니다.
 const VIEW_PASSWORD = (process.env.VIEW_PASSWORD || "5000").trim();
 
-const INSTRUCTOR_NAME_MAP = { JIMIN: "DOORI" };
+const INSTRUCTOR_NAME_MAP = {};
 const INSTRUCTOR_ORDER = ["ZOEY", "HANNAH", "SION", "SYEON", "SHU", "SEONYE", "AYEONG", "ONYU", "RARA", "JIMIN", "DOORI"];
 
 const STUDENT_BOARD = "1879266175";
