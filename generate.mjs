@@ -114,6 +114,24 @@ function linkOf(m, id) {
   }
   return N(c.text);
 }
+// 여러 board_relation(연결) 컬럼의 display_value(수강생 이름)를 하나로 병합한다.
+// 두 컬럼에 중복 배정된 학생은 없지만, 안전하게 이름 기준으로 중복 제거한다.
+function mergeRelationDisplay(m, ids) {
+  const names = [];
+  const seen = new Set();
+  for (const id of ids) {
+    const raw = displayOf(m, id) || textOf(m, id);
+    if (!raw) continue;
+    for (const part of raw.split(",")) {
+      const name = N(part);
+      if (name && !seen.has(name)) {
+        seen.add(name);
+        names.push(name);
+      }
+    }
+  }
+  return names.join(", ");
+}
 function parseDates(raw) {
   return Array.from(
     new Set(
@@ -243,7 +261,7 @@ function mapClass(it) {
     startMin: timeToMin(textOf(m, "hour")),
     habruta: hab === "0" ? "" : hab,
     assistant: textOf(m, "multiple_person_mkywhxez"),
-    students: displayOf(m, "board_relation_mkss72aq") || textOf(m, "board_relation_mkss72aq"),
+    students: mergeRelationDisplay(m, ["board_relation_mkss72aq", "board_relation_mm52z2sq"]),
     dates,
     lessonByDate,
     startDate: dates[0] || "",
@@ -646,7 +664,7 @@ async function main() {
   console.log("먼데이 보드 조회 중…");
   const [db, cls] = await Promise.all([
     fetchBoardItems(STUDENT_BOARD, ["date4", "color_mknkc0rw", "text_mknkvpaq", "link", "text_mktj6gkp", "text_mksvtgc8", "formula_mkv1sj2z"]),
-    fetchBoardItems(CLASS_BOARD, ["color_mm07m65v", "hour", "lookup", "project_owner", "formula_mkzy2qad", "multiple_person_mkywhxez", "board_relation_mkss72aq"], ["date65"]),
+    fetchBoardItems(CLASS_BOARD, ["color_mm07m65v", "hour", "lookup", "project_owner", "formula_mkzy2qad", "multiple_person_mkywhxez", "board_relation_mkss72aq", "board_relation_mm52z2sq"], ["date65"]),
   ]);
 
   const students = mapStudents(db.items);
