@@ -168,9 +168,11 @@ function mondayOf(iso) {
   d.setUTCDate(d.getUTCDate() + (dow === 0 ? -6 : 1 - dow));
   return d.toISOString().slice(0, 10);
 }
-// 하위아이템(레슨) 파싱: "LESSON 01" 처럼 깔끔히 떨어지는 것만 회차로 인정.
-// 그 외(공휴일 휴강 등)는 휴강 날짜로 처리.
-const LESSON_RE = /^LESSON\s+0*(\d+)$/i;
+// 하위아이템(레슨) 파싱: 이름에 "휴강"이 포함되어 있으면 휴강 날짜로 처리하고,
+// 그 외에는 모두 회차(레슨)로 인정한다. "LESSON 01" / "LESSON 001" 처럼 뒤에
+// 다른 텍스트가 붙어 있어도(예: "LESSON 08 *결제 안내") 회차 번호만 추출해 사용한다.
+const LESSON_NO_RE = /LESSON\s+0*(\d+)/i;
+const OFF_KEYWORD_RE = /휴강/;
 function parseLessons(it) {
   const lessons = []; // { date, no }
   const offs = []; // iso
@@ -178,11 +180,14 @@ function parseLessons(it) {
     const m = byId(s);
     const date = (textOf(m, "date65").match(/\d{4}-\d{2}-\d{2}/) || [""])[0];
     if (!date) continue;
-    // 이름에서 이모지/플래그 제거 후 "LESSON N" 정확 매칭
+    // 이름에서 이모지/플래그 제거
     const clean = N(s.name).replace(/[\p{Extended_Pictographic}\p{Regional_Indicator}]/gu, "").replace(/\s+/g, " ").trim();
-    const lm = clean.match(LESSON_RE);
-    if (lm) lessons.push({ date, no: parseInt(lm[1], 10) });
-    else offs.push(date);
+    if (OFF_KEYWORD_RE.test(clean)) {
+      offs.push(date);
+      continue;
+    }
+    const lm = clean.match(LESSON_NO_RE);
+    lessons.push({ date, no: lm ? parseInt(lm[1], 10) : null });
   }
   return { lessons, offs };
 }
